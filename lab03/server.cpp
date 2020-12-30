@@ -3,6 +3,8 @@
 #include <unistd.h>
 #include <sys/socket.h>
 #include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 #include <netinet/in.h>
 #include <string.h>
 #include <iostream>
@@ -16,6 +18,7 @@
 #define PORT 5001
 #define SERVER_IP "127.0.0.1"
 #define MSG_LEN 1024
+#define ROOT "/mnt/c/sem07/networks/lab03"
 
 using namespace std;
 
@@ -26,6 +29,8 @@ typedef struct s_resstatus {
 
 s_resstatus OK = {"200", "OK"};
 s_resstatus NOT_FOUND = {"404", "NOT FOUND"};
+s_resstatus FORBIDDEN = {"403", "FORBIDDEN"};
+
 
 vector<string> split(const string& str, const string& delim)
 {
@@ -43,40 +48,77 @@ vector<string> split(const string& str, const string& delim)
 	return tokens;
 }
 
+string getFileContent(string url)
+{
+	string filecontent = "";
+	int fd = open(url.c_str(), O_RDONLY);
+	if (fd != -1)
+	{
+		char buf[20];
+		int res;
+		while((res = read(fd, &buf, 19)) > 0)
+		{
+			buf[res] = '\0';
+			filecontent.append(buf);
+		}
+		close(fd);
+	}
+	return filecontent;
+}
+
+std::string formRespond(string url)
+{
+	string root = ROOT;
+	t_resstatus status = OK;
+	struct stat s;
+	if (stat(url.c_str(), &s) != 0 )
+	{
+		url = root + url;
+		if (stat(url.c_str(), &s) != 0 )
+		{
+			status = NOT_FOUND;
+		}
+	}
+	if (!(s.st_mode & S_IFREG))
+		status = FORBIDDEN;
+
+	std::string resultMsg = "";
+	resultMsg.append("HTTP/1.1 ");
+	resultMsg.append(status.code);
+	resultMsg.append(" ");
+	resultMsg.append(status.msg);
+	resultMsg.append("\r\n");
+	resultMsg.append("Connection: closed\r\n");
+	resultMsg.append("Content-Type: text/html; charset=UTF-8\r\n");
+	resultMsg.append("\r\n");
+
+	if (strcmp(status.code.c_str(), "200") == 0)
+		resultMsg.append(getFileContent(url));
+	return resultMsg;
+}
+
 std::string handleRequestMessage(char * innerMessage)
 {
-	cout << "TOKENS\n";
-	vector<string> tokens = split(innerMessage, "\r\n");
-	for(int i = 0; i < tokens.size(); i++)
-		std::cout << tokens[i] << std::endl;
+	// cout << "TOKENS\n";
+	// vector<string> tokens = split(innerMessage, "\r\n");
+	// for(int i = 0; i < tokens.size(); i++)
+	// 	std::cout << tokens[i] << std::endl;
 
-	char *method = strtok(innerMessage, " ");
-	char *url = strtok(NULL, " ");
-	char *httpVersion = strtok(NULL, "\r\n");
-	char *userName = strtok(NULL, "\r\n");
-	char *HostName = strtok(NULL, "\r\n");
-	char *Name = strstr(userName, ": ");
+	string method = strtok(innerMessage, " ");
+	string url = strtok(NULL, " ");
+	string httpVersion = strtok(NULL, "\r\n");
+	string userName = strtok(NULL, "\r\n");
+	string HostName = strtok(NULL, "\r\n");
+	string Name = strstr(userName.c_str(), ": ") + 2;
 
-	if (strcmp(method, "GET") == 0)
+	int history = open("history.txt", O_WRONLY | O_APPEND | O_CREAT, S_IRWXU);
+	string historyrecord = Name + " looked for " + url + "\n";
+	write(history, historyrecord.c_str(), strlen(historyrecord.c_str()));
+	close(history);
+
+	if (strcmp(method.c_str(), "GET") == 0)
 	{
-		// find and log
-
-		std::string resultMsg = "";
-		t_resstatus status = OK;
-		resultMsg.append(httpVersion);
-		resultMsg.append(" ");
-		resultMsg.append(status.code);
-		resultMsg.append(" ");
-		resultMsg.append(status.msg);
-		resultMsg.append("\r\n");
-		resultMsg.append("Connection: closed\r\n");
-		resultMsg.append("Content-Type: text/html; charset=UTF-8\r\n");
-		resultMsg.append("\r\n");
-
-		std::string filecontent = "";
-		// filecontent = getFileContent();
-		resultMsg.append(filecontent);
-		return resultMsg;
+		return formRespond(url);
 	}
 	return "NOT GET METHOD";
 }
@@ -184,6 +226,18 @@ int main()
 			perror_and_exit("accept()", 3);
 
 		bytes_read = recv(sock, buf, MSG_LEN, 0);
+		if (bytes_read < 0)
+		{
+			printf("Recv failed");
+			close(sock);
+			continue ;
+		}
+		if (bytes_read == 0)
+		{
+			puts("Client disconnected upexpectedly.");
+			close(sock);
+			continue ;
+		}
 		buf[bytes_read] = '\0';
 		cout << "buf" << buf << "\n";
 		char tst[MSG_LEN];
